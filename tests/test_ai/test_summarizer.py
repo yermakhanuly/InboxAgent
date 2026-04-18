@@ -13,10 +13,8 @@ def test_build_prompt_includes_emails(sample_emails, sample_events):
 
 
 def test_build_prompt_snippet_truncated(sample_emails, sample_events):
-    # Artificially long snippet
     sample_emails[0].snippet = "x" * 600
     prompt = _build_prompt(sample_emails, sample_events, [])
-    # Snippet in prompt should not exceed 500 chars
     assert "x" * 501 not in prompt
 
 
@@ -31,26 +29,33 @@ def test_build_prompt_includes_errors(sample_emails, sample_events):
 
 
 @pytest.mark.asyncio
-async def test_summarize_digest_calls_claude(sample_emails, sample_events):
+async def test_summarize_digest_calls_openai(sample_emails, sample_events):
+    mock_message = MagicMock()
+    mock_message.content = "Your digest summary"
+
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+
     mock_response = MagicMock()
-    mock_response.content = [MagicMock(text="Your digest summary")]
-    mock_response.usage = MagicMock(
-        cache_creation_input_tokens=100,
-        cache_read_input_tokens=0,
-        input_tokens=500,
-    )
+    mock_response.choices = [mock_choice]
+    mock_response.usage = MagicMock(prompt_tokens=500, completion_tokens=100)
+
+    mock_completions = MagicMock()
+    mock_completions.create = AsyncMock(return_value=mock_response)
+
+    mock_chat = MagicMock()
+    mock_chat.completions = mock_completions
 
     mock_client = MagicMock()
-    mock_client.messages = MagicMock()
-    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    mock_client.chat = mock_chat
 
-    with patch("inboxagent.ai.summarizer.anthropic.AsyncAnthropic", return_value=mock_client):
+    with patch("inboxagent.ai.summarizer.AsyncOpenAI", return_value=mock_client):
         result = await summarize_digest(sample_emails, sample_events, [])
 
     assert result == "Your digest summary"
-    mock_client.messages.create.assert_called_once()
+    mock_completions.create.assert_called_once()
 
-    # Verify prompt caching is set on the system prompt
-    call_kwargs = mock_client.messages.create.call_args.kwargs
-    system = call_kwargs["system"]
-    assert system[0]["cache_control"] == {"type": "ephemeral"}
+    call_kwargs = mock_completions.create.call_args.kwargs
+    messages = call_kwargs["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"

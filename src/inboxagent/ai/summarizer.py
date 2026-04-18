@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-import anthropic
+from openai import AsyncOpenAI
 
 from ..config import settings
 from ..providers.base import CalendarEvent, EmailMessage
@@ -27,31 +27,26 @@ async def summarize_digest(
     events: list[CalendarEvent],
     provider_errors: list[str],
 ) -> str:
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
 
     user_content = _build_prompt(emails, events, provider_errors)
 
-    response = await client.messages.create(
-        model="claude-sonnet-4-6",
+    response = await client.chat.completions.create(
+        model="gpt-4o",
         max_tokens=2048,
-        system=[
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
         ],
-        messages=[{"role": "user", "content": user_content}],
     )
 
     logger.debug(
-        "Summarizer usage — cache_write: %s, cache_read: %s, uncached: %s",
-        getattr(response.usage, "cache_creation_input_tokens", 0),
-        getattr(response.usage, "cache_read_input_tokens", 0),
-        response.usage.input_tokens,
+        "Summarizer usage — prompt_tokens: %s, completion_tokens: %s",
+        response.usage.prompt_tokens,
+        response.usage.completion_tokens,
     )
 
-    return response.content[0].text
+    return response.choices[0].message.content
 
 
 def _build_prompt(

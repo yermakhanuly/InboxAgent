@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-import anthropic
+from openai import AsyncOpenAI
 
 from ..config import settings
 from ..database import get_user_accounts
@@ -17,89 +17,88 @@ Format responses for Telegram — plain text, short, no unnecessary headers."""
 
 TOOLS = [
     {
-        "name": "get_emails",
-        "description": "Fetch recent emails from Gmail and/or Outlook. Use this when the user asks about emails, messages, or inbox.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Optional search query or filter (e.g. 'from:boss@company.com', 'subject:invoice'). Leave empty for all recent emails.",
+        "type": "function",
+        "function": {
+            "name": "get_emails",
+            "description": "Fetch recent emails from Gmail and/or Outlook. Use this when the user asks about emails, messages, or inbox.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Optional search query or filter (e.g. 'from:boss@company.com', 'subject:invoice'). Leave empty for all recent emails.",
+                    },
+                    "hours_back": {
+                        "type": "integer",
+                        "description": "How many hours back to look. Default 24.",
+                    },
                 },
-                "hours_back": {
-                    "type": "integer",
-                    "description": "How many hours back to look. Default 24.",
-                    "default": 24,
-                },
+                "required": [],
             },
-            "required": [],
         },
     },
     {
-        "name": "get_calendar_events",
-        "description": "Fetch upcoming calendar events from Google Calendar and/or Teams. Use when user asks about meetings, schedule, or calendar.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "date_description": {
-                    "type": "string",
-                    "description": "Natural language date range like 'today', 'tomorrow', 'this week', 'next Monday'.",
-                    "default": "today",
+        "type": "function",
+        "function": {
+            "name": "get_calendar_events",
+            "description": "Fetch upcoming calendar events from Google Calendar and/or Teams. Use when user asks about meetings, schedule, or calendar.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date_description": {
+                        "type": "string",
+                        "description": "Natural language date range like 'today', 'tomorrow', 'this week', 'next Monday'.",
+                    },
                 },
+                "required": [],
             },
-            "required": [],
         },
     },
 ]
 
 
 async def answer_query(user_id: int, question: str) -> str:
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-    messages = [{"role": "user", "content": question}]
+    messages = [
+        {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+        {"role": "user", "content": question},
+    ]
 
     # Agentic loop — at most 3 tool-call rounds
     for _ in range(3):
-        response = await client.messages.create(
-            model="claude-sonnet-4-6",
+        response = await client.chat.completions.create(
+            model="gpt-4o",
             max_tokens=1024,
-            system=[
-                {
-                    "type": "text",
-                    "text": AGENT_SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
             tools=TOOLS,
             messages=messages,
         )
 
-        if response.stop_reason == "end_turn":
-            return _extract_text(response)
+        choice = response.choices[0]
 
-        if response.stop_reason == "tool_use":
-            messages.append({"role": "assistant", "content": response.content})
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result = await _call_tool(user_id, block.name, block.input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-            messages.append({"role": "user", "content": tool_results})
+        if choice.finish_reason == "stop":
+            return choice.message.content or "I couldn't generate a response."
+
+        if choice.finish_reason == "tool_calls":
+            messages.append(choice.message)
+            for tool_call in choice.message.tool_calls:
+                try:
+                    tool_input = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    tool_input = {}
+                result = await _call_tool(user_id, tool_call.function.name, tool_input)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result,
+                })
         else:
             break
 
-    return _extract_text(response)
-
-
-def _extract_text(response) -> str:
-    for block in response.content:
-        if hasattr(block, "text"):
-            return block.text
-    return "I couldn't generate a response."
+    last = messages[-1]
+    if isinstance(last, dict):
+        return last.get("content") or "I couldn't generate a response."
+    return getattr(last, "content", None) or "I couldn't generate a response."
 
 
 async def _call_tool(user_id: int, tool_name: str, tool_input: dict) -> str:

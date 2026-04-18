@@ -17,7 +17,7 @@ A personal Telegram bot that aggregates your Gmail, Outlook, Google Calendar, an
 - Python 3.12+
 - A Telegram bot token ([create one via @BotFather](https://t.me/BotFather))
 - Your numeric Telegram user ID (message @userinfobot)
-- An Anthropic API key
+- An OpenAI API key
 - (Optional) Google Cloud project with Gmail + Calendar APIs enabled
 - (Optional) Azure App Registration with Mail.Read + Calendars.Read scopes
 
@@ -87,7 +87,7 @@ config.py             ← pydantic-settings env loading
 database.py           ← SQLite schema (aiosqlite)
 auth/                 ← OAuth flows + encrypted token storage
 providers/            ← Gmail, Google Calendar, Outlook, Teams via APIs
-ai/summarizer.py      ← Claude claude-sonnet-4-6 with prompt caching
+ai/summarizer.py      ← GPT-4o via OpenAI API
 ai/agent.py           ← Interactive Claude agent with tool use
 digest/builder.py     ← Concurrent asyncio.gather across all providers
 scheduler/jobs.py     ← APScheduler CronTrigger at 08:00 Europe/London

@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     telegram_bot_token: str
     telegram_user_id: int
 
-    # Anthropic
-    anthropic_api_key: str
+    # OpenAI
+    openai_api_key: str
 
     # Google
     google_client_id: str = ""
