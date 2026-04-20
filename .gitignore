@@ -13,3 +13,4 @@ venv/
 .mypy_cache/
 *.log
 /data/
+CLAUDE.md
