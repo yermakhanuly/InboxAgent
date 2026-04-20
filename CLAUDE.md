@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Instructions
+
+First plan your actions, then fix the any error. Then before finishing, check the code by yourself again, test it. If you found any errors, repeat the actions
+
 ## Commands
 
 ```bash
