@@ -38,7 +38,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await ensure_user(user_id)
 
     from .keyboards import auth_menu_keyboard
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "👋 Welcome to *InboxAgent*\\!\n\n"
         "I'll send you a daily digest at 8 AM with your emails and calendar events\\.\n\n"
         "Connect your accounts to get started:",
@@ -53,8 +53,10 @@ async def auth_google_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not _auth_check(update):
         return
 
+    user_id = update.effective_user.id
+
     if not settings.google_client_id:
-        await update.message.reply_text("Google OAuth is not configured. Set GOOGLE_CLIENT_ID in .env")
+        await context.bot.send_message(user_id, "Google OAuth is not configured. Set GOOGLE_CLIENT_ID in .env")
         return
 
     server = context.bot_data["oauth_server"]
@@ -62,15 +64,15 @@ async def auth_google_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     future = server.register_state(state)
 
     from ..auth.google import get_google_auth_url
-    auth_url = get_google_auth_url(state)
+    auth_url, code_verifier = get_google_auth_url(state)
 
-    await update.message.reply_text(
+    await context.bot.send_message(
+        user_id,
         f"Click to authenticate with Google:\n{auth_url}\n\nThis link expires in 5 minutes."
     )
 
-    user_id = update.effective_user.id
     asyncio.create_task(
-        _complete_google_auth(user_id, future, state, server, context)
+        _complete_google_auth(user_id, future, state, server, context, code_verifier)
     )
 
 
@@ -80,12 +82,13 @@ async def _complete_google_auth(
     state: str,
     server,
     context: ContextTypes.DEFAULT_TYPE,
+    code_verifier: str | None = None,
 ) -> None:
     try:
         code = await asyncio.wait_for(future, timeout=settings.oauth_state_timeout_seconds)
         from ..auth.google import exchange_google_code, get_google_account_email
         from ..auth.token_store import token_store
-        tokens = await exchange_google_code(code)
+        tokens = await exchange_google_code(code, code_verifier)
         email = await get_google_account_email(tokens)
         await token_store.save_token(user_id, "google", email, tokens)
         await context.bot.send_message(user_id, f"✅ Google account connected: {email}")
@@ -104,8 +107,10 @@ async def auth_microsoft_command(update: Update, context: ContextTypes.DEFAULT_T
     if not _auth_check(update):
         return
 
+    user_id = update.effective_user.id
+
     if not settings.microsoft_client_id:
-        await update.message.reply_text("Microsoft OAuth is not configured. Set MICROSOFT_CLIENT_ID in .env")
+        await context.bot.send_message(user_id, "Microsoft OAuth is not configured. Set MICROSOFT_CLIENT_ID in .env")
         return
 
     server = context.bot_data["oauth_server"]
@@ -115,11 +120,11 @@ async def auth_microsoft_command(update: Update, context: ContextTypes.DEFAULT_T
     from ..auth.microsoft import get_microsoft_direct_auth_url
     auth_url = get_microsoft_direct_auth_url(state)
 
-    await update.message.reply_text(
+    await context.bot.send_message(
+        user_id,
         f"Click to authenticate with Microsoft:\n{auth_url}\n\nThis link expires in 5 minutes."
     )
 
-    user_id = update.effective_user.id
     asyncio.create_task(
         _complete_microsoft_auth(user_id, future, state, server, context)
     )
@@ -159,14 +164,14 @@ async def accounts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     accounts = await get_user_accounts(user_id)
 
     if not accounts:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "No accounts connected. Use /auth_google or /auth_microsoft."
         )
         return
 
     from .keyboards import connected_accounts_keyboard
     lines = "\n".join(f"• {'Google' if p == 'google' else 'Microsoft'}: {e}" for p, e in accounts)
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"Connected accounts:\n{lines}",
         reply_markup=connected_accounts_keyboard(accounts),
     )
@@ -179,7 +184,7 @@ async def digest_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     user_id = update.effective_user.id
-    await update.message.reply_text("📬 Generating your digest...")
+    await update.effective_message.reply_text("📬 Generating your digest...")
     await update.effective_chat.send_action(ChatAction.TYPING)
 
     from ..scheduler.jobs import send_daily_digest
@@ -201,12 +206,12 @@ async def inbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         result = await fetch_emails_only(user_id)
         if not result:
-            await update.message.reply_text("No unread emails found.")
+            await update.effective_message.reply_text("No unread emails found.")
             return
         for chunk in chunk_message(result):
-            await update.message.reply_text(chunk)
+            await update.effective_message.reply_text(chunk)
     except Exception as exc:
-        await update.message.reply_text(f"❌ Error fetching inbox: {exc}")
+        await update.effective_message.reply_text(f"❌ Error fetching inbox: {exc}")
 
 
 # ── /calendar ─────────────────────────────────────────────────────────────────
@@ -224,12 +229,12 @@ async def calendar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         result = await fetch_events_only(user_id)
         if not result:
-            await update.message.reply_text("No upcoming events found.")
+            await update.effective_message.reply_text("No upcoming events found.")
             return
         for chunk in chunk_message(result):
-            await update.message.reply_text(chunk)
+            await update.effective_message.reply_text(chunk)
     except Exception as exc:
-        await update.message.reply_text(f"❌ Error fetching calendar: {exc}")
+        await update.effective_message.reply_text(f"❌ Error fetching calendar: {exc}")
 
 
 # ── /help ─────────────────────────────────────────────────────────────────────
@@ -238,7 +243,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not _auth_check(update):
         return
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "/start — Welcome & connect accounts\n"
         "/auth_google — Connect Gmail + Google Calendar\n"
         "/auth_microsoft — Connect Outlook + Teams Calendar\n"
@@ -267,10 +272,10 @@ async def free_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     try:
         reply = await answer_query(user_id, text)
         for chunk in chunk_message(reply):
-            await update.message.reply_text(chunk)
+            await update.effective_message.reply_text(chunk)
     except Exception as exc:
         logger.exception("Free-text agent error for user %d", user_id)
-        await update.message.reply_text(f"❌ Error: {exc}")
+        await update.effective_message.reply_text(f"❌ Error: {exc}")
 
 
 # ── Callback query (inline keyboard buttons) ──────────────────────────────────

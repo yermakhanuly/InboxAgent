@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -10,12 +11,14 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
 
 CLIENT_CONFIG = {
-    "installed": {
+    "web": {
         "client_id": settings.google_client_id,
         "client_secret": settings.google_client_secret,
         "redirect_uris": [settings.google_redirect_uri],
@@ -25,7 +28,7 @@ CLIENT_CONFIG = {
 }
 
 
-def get_google_auth_url(state: str) -> str:
+def get_google_auth_url(state: str) -> tuple[str, str | None]:
     flow = Flow.from_client_config(CLIENT_CONFIG, scopes=SCOPES, state=state)
     flow.redirect_uri = settings.google_redirect_uri
     auth_url, _ = flow.authorization_url(
@@ -33,15 +36,17 @@ def get_google_auth_url(state: str) -> str:
         include_granted_scopes="true",
         prompt="consent",
     )
-    return auth_url
+    return auth_url, getattr(flow, "code_verifier", None)
 
 
-async def exchange_google_code(code: str) -> dict:
+async def exchange_google_code(code: str, code_verifier: str | None = None) -> dict:
     flow = Flow.from_client_config(CLIENT_CONFIG, scopes=SCOPES)
     flow.redirect_uri = settings.google_redirect_uri
+    if code_verifier:
+        flow.code_verifier = code_verifier
 
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, flow.fetch_token, None, code)
+    await loop.run_in_executor(None, functools.partial(flow.fetch_token, code=code))
 
     creds: Credentials = flow.credentials
     return _creds_to_dict(creds)
@@ -63,18 +68,14 @@ async def refresh_google_token(tokens: dict) -> dict:
 
 
 async def get_google_account_email(tokens: dict) -> str:
-    from googleapiclient.discovery import build
-    import google.oauth2.credentials as google_creds
-
-    creds = google_creds.Credentials(token=tokens["access_token"])
-    loop = asyncio.get_event_loop()
-
-    def _fetch():
-        service = build("oauth2", "v2", credentials=creds)
-        return service.userinfo().get().execute()
-
-    info = await loop.run_in_executor(None, _fetch)
-    return info["email"]
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        resp.raise_for_status()
+        return resp.json()["email"]
 
 
 def _creds_to_dict(creds: Credentials) -> dict:
