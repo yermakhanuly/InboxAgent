@@ -11,7 +11,4 @@ COPY pyproject.toml .
 
 RUN pip install --no-cache-dir -e .
 
-# Data directory for SQLite — override via volume mount
-RUN mkdir -p /data
-
 CMD ["python", "-m", "inboxagent.main"]

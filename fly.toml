@@ -1,0 +1,19 @@
+# Fly.io app config — see https://fly.io/docs/reference/configuration/
+# Set `app` to a unique name before first deploy (or let `fly launch` generate one).
+
+app = "inboxagent-yernar"
+primary_region = "lhr"   # London — matches DEFAULT_TIMEZONE=Europe/London
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false    # must stay running for Telegram polling + APScheduler
+  auto_start_machines = false
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
