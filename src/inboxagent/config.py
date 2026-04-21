@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     token_encryption_key: str
 
     # Database
-    database_path: str = "/data/inboxagent.db"
+    database_url: str
 
     # Scheduler
     default_timezone: str = "Europe/London"

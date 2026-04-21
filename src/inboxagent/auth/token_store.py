@@ -2,10 +2,10 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-import aiosqlite
 from cryptography.fernet import Fernet
 
 from ..config import settings
+from ..database import get_pool
 
 logger = logging.getLogger(__name__)
 
@@ -32,35 +32,33 @@ class TokenStore:
         self, user_id: int, provider: str, account_email: str, tokens: dict
     ) -> None:
         encrypted = self._encrypt(tokens)
-        async with aiosqlite.connect(settings.database_path) as db:
-            await db.execute(
+        async with get_pool().acquire() as conn:
+            await conn.execute(
                 """
                 INSERT INTO oauth_tokens (user_id, provider, account_email, encrypted_tokens, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (user_id, provider, account_email)
-                DO UPDATE SET encrypted_tokens = excluded.encrypted_tokens,
-                              updated_at = excluded.updated_at
+                DO UPDATE SET encrypted_tokens = EXCLUDED.encrypted_tokens,
+                              updated_at = EXCLUDED.updated_at
                 """,
-                (user_id, provider, account_email, encrypted, datetime.now(timezone.utc).isoformat()),
+                user_id, provider, account_email, encrypted,
+                datetime.now(timezone.utc),
             )
-            await db.commit()
 
     async def get_valid_token(
         self, user_id: int, provider: str, account_email: str
     ) -> dict:
         """Return tokens, refreshing the access token if near expiry."""
-        async with aiosqlite.connect(settings.database_path) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                "SELECT encrypted_tokens FROM oauth_tokens WHERE user_id=? AND provider=? AND account_email=?",
-                (user_id, provider, account_email),
-            ) as cursor:
-                row = await cursor.fetchone()
+        async with get_pool().acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT encrypted_tokens FROM oauth_tokens WHERE user_id=$1 AND provider=$2 AND account_email=$3",
+                user_id, provider, account_email,
+            )
 
         if not row:
             raise NoTokensError(f"No tokens stored for {provider}/{account_email}")
 
-        tokens = self._decrypt(row["encrypted_tokens"])
+        tokens = self._decrypt(bytes(row["encrypted_tokens"]))
 
         expiry_str = tokens.get("expiry")
         if expiry_str:
@@ -74,12 +72,11 @@ class TokenStore:
         return tokens
 
     async def delete_token(self, user_id: int, provider: str, account_email: str) -> None:
-        async with aiosqlite.connect(settings.database_path) as db:
-            await db.execute(
-                "DELETE FROM oauth_tokens WHERE user_id=? AND provider=? AND account_email=?",
-                (user_id, provider, account_email),
+        async with get_pool().acquire() as conn:
+            await conn.execute(
+                "DELETE FROM oauth_tokens WHERE user_id=$1 AND provider=$2 AND account_email=$3",
+                user_id, provider, account_email,
             )
-            await db.commit()
 
     async def _refresh(
         self, user_id: int, provider: str, account_email: str, tokens: dict

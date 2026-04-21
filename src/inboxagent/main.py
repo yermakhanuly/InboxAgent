@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
@@ -64,7 +63,6 @@ def build_application() -> Application:
 
 
 def main() -> None:
-    os.makedirs(os.path.dirname(settings.database_path), exist_ok=True)
     app = build_application()
     logger.info("InboxAgent starting...")
     app.run_polling(drop_pending_updates=True)
